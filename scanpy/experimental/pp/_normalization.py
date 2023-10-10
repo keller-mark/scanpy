@@ -22,6 +22,12 @@ from scanpy.experimental._docs import (
     doc_pca_chunk,
 )
 
+# try dask if available
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 
 def _pearson_residuals(X, theta, clip, check_values, copy=False):
     X = X.copy() if copy else X
@@ -52,15 +58,22 @@ def _pearson_residuals(X, theta, clip, check_values, copy=False):
         sums_genes = np.sum(X, axis=0, keepdims=True)
         sums_cells = np.sum(X, axis=1, keepdims=True)
         sum_total = np.sum(sums_genes)
+    
+    if da is not None:
+        X = da.from_array(X, chunks=(30_000, 10_000))
+        sums_genes = da.from_array(sums_genes, chunks=10_000)
+        sums_cells = da.from_array(sums_cells, chunks=30_000)
 
-    mu = np.array(sums_cells @ sums_genes / sum_total)
-    diff = np.array(X - mu)
-    residuals = diff / np.sqrt(mu + mu**2 / theta)
+        mu = da.divide(da.matmul(sums_cells, sums_genes), sum_total)
+        diff = da.subtract(X, mu)
+        residuals = da.divide(diff, da.sqrt(da.add(mu, da.divide(da.power(mu, 2), theta))))
+        return residuals.clip(min=-clip, max=clip)
+    else:
 
-    # clip
-    residuals = np.clip(residuals, a_min=-clip, a_max=clip)
-
-    return residuals
+        mu = (sums_cells @ sums_genes / sum_total)
+        diff = (X - mu)
+        residuals = diff / np.sqrt(mu + mu**2 / theta)
+        return np.clip(residuals, a_min=-clip, a_max=clip)
 
 
 @_doc_params(
@@ -127,6 +140,9 @@ def normalize_pearson_residuals(
     start = logg.info(msg)
 
     residuals = _pearson_residuals(X, theta, clip, check_values, copy=~inplace)
+    if da is not None:
+        # Temporary: return early if using dask.
+        return residuals
     settings_dict = dict(theta=theta, clip=clip, computed_on=computed_on)
 
     if inplace:
