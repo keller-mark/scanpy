@@ -52,7 +52,7 @@ def _pearson_residuals(h5ad_path, X_path, theta, clip, check_values, copy=False)
         # Use h5py so that X does not get loaded into memory
         # which would cause Dask to include it in the task graph,
         # which causes the task graph to be too large.
-        X = da.from_array(f[X_path], chunks=(15_000, 10_000), inline_array=False)
+        X = da.from_array(f[X_path], chunks=(10_000, 10_000), inline_array=False)
 
         # prepare clipping
         if clip is None:
