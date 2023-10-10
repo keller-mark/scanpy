@@ -1,6 +1,7 @@
 from typing import Optional, Dict
 from warnings import warn
 
+import h5py
 import numpy as np
 import pandas as pd
 from anndata import AnnData
@@ -29,51 +30,66 @@ except ImportError:
     da = None
 
 
-def _pearson_residuals(X, theta, clip, check_values, copy=False):
-    X = X.copy() if copy else X
+def _pearson_residuals(h5ad_path, X_path, theta, clip, check_values, copy=False):
+    #X = X.copy() if copy else X
 
     # check theta
     if theta <= 0:
         # TODO: would "underdispersion" with negative theta make sense?
         # then only theta=0 were undefined..
         raise ValueError('Pearson residuals require theta > 0')
-    # prepare clipping
-    if clip is None:
-        n = X.shape[0]
-        clip = np.sqrt(n)
-    if clip < 0:
-        raise ValueError("Pearson residuals require `clip>=0` or `clip=None`.")
+    
 
-    if check_values and not check_nonnegative_integers(X):
-        warn(
-            "`normalize_pearson_residuals()` expects raw count data, but non-integers were found.",
-            UserWarning,
-        )
-
-    if issparse(X):
-        sums_genes = np.sum(X, axis=0)
-        sums_cells = np.sum(X, axis=1)
-        sum_total = np.sum(sums_genes).squeeze()
-    else:
-        sums_genes = np.sum(X, axis=0, keepdims=True)
-        sums_cells = np.sum(X, axis=1, keepdims=True)
-        sum_total = np.sum(sums_genes)
+    # if check_values and not check_nonnegative_integers(X):
+    #     warn(
+    #         "`normalize_pearson_residuals()` expects raw count data, but non-integers were found.",
+    #         UserWarning,
+    #     )
     
     if da is not None:
-        X = da.from_array(X, chunks=(30_000, 10_000))
-        sums_genes = da.from_array(sums_genes, chunks=10_000)
-        sums_cells = da.from_array(sums_cells, chunks=30_000)
+        f = h5py.File(h5ad_path, 'r')
+
+        # Use h5py so that X does not get loaded into memory
+        # which would cause Dask to include it in the task graph,
+        # which causes the task graph to be too large.
+        X = da.from_array(f[X_path], chunks=(30_000, 10_000), inline_array=False)
+
+        # prepare clipping
+        if clip is None:
+            n = X.shape[0]
+            clip = da.sqrt(n)
+        if clip < 0:
+            raise ValueError("Pearson residuals require `clip>=0` or `clip=None`.")
+
+        sums_genes = da.sum(X, axis=0, keepdims=True)
+        sums_cells = da.sum(X, axis=1, keepdims=True)
+        sum_total = da.sum(sums_genes)
 
         mu = da.divide(da.matmul(sums_cells, sums_genes), sum_total)
         diff = da.subtract(X, mu)
         residuals = da.divide(diff, da.sqrt(da.add(mu, da.divide(da.power(mu, 2), theta))))
         return residuals.clip(min=-clip, max=clip)
+
+
+
+"""
     else:
+
+        X = None
+        if issparse(X):
+            sums_genes = np.sum(X, axis=0)
+            sums_cells = np.sum(X, axis=1)
+            sum_total = np.sum(sums_genes).squeeze()
+        else:
+            sums_genes = np.sum(X, axis=0, keepdims=True)
+            sums_cells = np.sum(X, axis=1, keepdims=True)
+            sum_total = np.sum(sums_genes)
 
         mu = (sums_cells @ sums_genes / sum_total)
         diff = (X - mu)
         residuals = diff / np.sqrt(mu + mu**2 / theta)
         return np.clip(residuals, a_min=-clip, a_max=clip)
+"""
 
 
 @_doc_params(
@@ -87,6 +103,8 @@ def _pearson_residuals(X, theta, clip, check_values, copy=False):
 def normalize_pearson_residuals(
     adata: AnnData,
     *,
+    h5ad_path: str,
+    X_path: str,
     theta: float = 100,
     clip: Optional[float] = None,
     check_values: bool = True,
@@ -139,7 +157,7 @@ def normalize_pearson_residuals(
     msg = f'computing analytic Pearson residuals on {computed_on}'
     start = logg.info(msg)
 
-    residuals = _pearson_residuals(X, theta, clip, check_values, copy=~inplace)
+    residuals = _pearson_residuals(h5ad_path, X_path, theta, clip, check_values, copy=~inplace)
     if da is not None:
         # Temporary: return early if using dask.
         return residuals
