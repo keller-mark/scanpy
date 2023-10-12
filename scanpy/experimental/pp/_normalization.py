@@ -153,7 +153,8 @@ def normalize_pearson_residuals(
 
         view_to_actual(adata)
         X = _get_obs_rep(adata, layer=layer)
-        computed_on = layer if layer else 'adata.X'
+    
+    computed_on = layer if layer else 'adata.X'
 
     msg = f'computing analytic Pearson residuals on {computed_on}'
     start = logg.info(msg)
