@@ -1,7 +1,7 @@
 from typing import Optional, Dict
 from warnings import warn
 
-import h5py
+import zarr
 import numpy as np
 import pandas as pd
 from anndata import AnnData
@@ -30,7 +30,7 @@ except ImportError:
     da = None
 
 
-def _pearson_residuals(h5ad_path, X_path, theta, clip, check_values, copy=False):
+def _pearson_residuals(zarr_path, X_path, theta, clip, check_values, copy=False):
     #X = X.copy() if copy else X
 
     # check theta
@@ -47,12 +47,11 @@ def _pearson_residuals(h5ad_path, X_path, theta, clip, check_values, copy=False)
     #     )
     
     if da is not None:
-        f = h5py.File(h5ad_path, 'r')
 
-        # Use h5py so that X does not get loaded into memory
+        # Use Zarr so that X does not get loaded into memory
         # which would cause Dask to include it in the task graph,
         # which causes the task graph to be too large.
-        X = da.from_array(f[X_path], chunks=(5_000, 5_000), inline_array=False)
+        X = da.from_zarr(url=zarr_path, component=X_path, chunks=(5_000, 5_000), inline_array=False)
 
         # prepare clipping
         if clip is None:
@@ -103,7 +102,7 @@ def _pearson_residuals(h5ad_path, X_path, theta, clip, check_values, copy=False)
 def normalize_pearson_residuals(
     adata: AnnData,
     *,
-    h5ad_path: str,
+    zarr_path: str,
     X_path: str,
     theta: float = 100,
     clip: Optional[float] = None,
@@ -157,7 +156,7 @@ def normalize_pearson_residuals(
     msg = f'computing analytic Pearson residuals on {computed_on}'
     start = logg.info(msg)
 
-    residuals = _pearson_residuals(h5ad_path, X_path, theta, clip, check_values, copy=~inplace)
+    residuals = _pearson_residuals(zarr_path, X_path, theta, clip, check_values, copy=~inplace)
     if da is not None:
         # Temporary: return early if using dask.
         return residuals
