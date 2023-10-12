@@ -100,7 +100,7 @@ def _pearson_residuals(zarr_path, X_path, theta, clip, check_values, copy=False)
     copy=doc_copy,
 )
 def normalize_pearson_residuals(
-    adata: AnnData,
+    adata: Optional[AnnData] = None,
     *,
     zarr_path: str,
     X_path: str,
@@ -144,14 +144,16 @@ def normalize_pearson_residuals(
          The name of the layer on which the residuals were computed.
     """
 
-    if copy:
-        if not inplace:
-            raise ValueError("`copy=True` cannot be used with `inplace=False`.")
-        adata = adata.copy()
+    if adata is not None:
 
-    view_to_actual(adata)
-    X = _get_obs_rep(adata, layer=layer)
-    computed_on = layer if layer else 'adata.X'
+        if copy:
+            if not inplace:
+                raise ValueError("`copy=True` cannot be used with `inplace=False`.")
+            adata = adata.copy()
+
+        view_to_actual(adata)
+        X = _get_obs_rep(adata, layer=layer)
+        computed_on = layer if layer else 'adata.X'
 
     msg = f'computing analytic Pearson residuals on {computed_on}'
     start = logg.info(msg)
