@@ -48,10 +48,16 @@ def _pearson_residuals(zarr_path, X_path, theta, clip, check_values, copy=False)
     
     if da is not None:
 
+        # Get the number of cells in X to use for the chunks argument.
+        z = zarr.open(zarr_path, path=X_path, mode='r')
+        X_shape = z.shape
+        var_chunk_size = 5 # Store 5 genes per chunk
+
+
         # Use Zarr so that X does not get loaded into memory
         # which would cause Dask to include it in the task graph,
         # which causes the task graph to be too large.
-        X = da.from_zarr(url=zarr_path, component=X_path, chunks=(5_000, 5_000), inline_array=False)
+        X = da.from_zarr(url=zarr_path, component=X_path, chunks=(X_shape[0], var_chunk_size), inline_array=False)
 
         # prepare clipping
         if clip is None:
