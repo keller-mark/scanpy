@@ -6,103 +6,17 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 from sklearn.utils import check_array, check_random_state
 
-from .. import logging as logg
-from .._compat import old_positionals
-from .._settings import settings
-from .._utils import AnyRandom, NeighborsView
-from ._utils import _choose_representation, get_init_pos_from_paga
+from ... import logging as logg
+from ..._compat import old_positionals
+from ..._settings import settings
+from ..._utils import AnyRandom, NeighborsView
+from scanpy.tools._utils import _choose_representation, get_init_pos_from_paga
+from scanpy.tools._umap import prepare_umap_or_densmap
 
 if TYPE_CHECKING:
     from anndata import AnnData
 
 _InitPos = Literal["paga", "spectral", "random"]
-
-def prepare_umap_or_densmap(
-    adata: AnnData,
-    *,
-    min_dist: float = 0.5,
-    spread: float = 1.0,
-    n_components: int = 2,
-    maxiter: int | None = None,
-    alpha: float = 1.0,
-    gamma: float = 1.0,
-    negative_sample_rate: int = 5,
-    init_pos: _InitPos | np.ndarray | None = "spectral",
-    random_state: AnyRandom = 0,
-    a: float | None = None,
-    b: float | None = None,
-    copy: bool = False,
-    method: Literal["umap", "rapids"] = "umap",
-    neighbors_key: str | None = None,
-) -> AnnData | None:
-    adata = adata.copy() if copy else adata
-
-    if neighbors_key is None:
-        neighbors_key = "neighbors"
-
-    if neighbors_key not in adata.uns:
-        raise ValueError(
-            f"Did not find .uns[{neighbors_key!r}]. Run `sc.pp.neighbors` first."
-        )
-    start = logg.info("computing UMAP")
-
-    neighbors = NeighborsView(adata, neighbors_key)
-
-    if "params" not in neighbors or neighbors["params"]["method"] != "umap":
-        logg.warning(
-            f'.obsp["{neighbors["connectivities_key"]}"] have not been computed using umap'
-        )
-
-    with warnings.catch_warnings():
-        # umap 0.5.0
-        warnings.filterwarnings("ignore", message=r"Tensorflow not installed")
-        import umap
-
-    from umap.umap_ import find_ab_params
-
-    if a is None or b is None:
-        a, b = find_ab_params(spread, min_dist)
-    else:
-        a = a
-        b = b
-    adata.uns["umap"] = {"params": {"a": a, "b": b}}
-    if isinstance(init_pos, str) and init_pos in adata.obsm.keys():
-        init_coords = adata.obsm[init_pos]
-    elif isinstance(init_pos, str) and init_pos == "paga":
-        init_coords = get_init_pos_from_paga(
-            adata, random_state=random_state, neighbors_key=neighbors_key
-        )
-    else:
-        init_coords = init_pos  # Let umap handle it
-    if hasattr(init_coords, "dtype"):
-        init_coords = check_array(init_coords, dtype=np.float32, accept_sparse=False)
-
-    if random_state != 0:
-        adata.uns["umap"]["params"]["random_state"] = random_state
-    random_state = check_random_state(random_state)
-
-    neigh_params = neighbors["params"]
-    X = _choose_representation(
-        adata,
-        use_rep=neigh_params.get("use_rep", None),
-        n_pcs=neigh_params.get("n_pcs", None),
-        silent=True,
-    )
-
-    return (
-        adata,
-        neighbors_key,
-        start,
-        neighbors,
-        a,
-        b,
-        init_coords,
-        random_state,
-        neigh_params,
-        X,
-    )
-
-
 
 @old_positionals(
     "min_dist",
@@ -120,7 +34,7 @@ def prepare_umap_or_densmap(
     "method",
     "neighbors_key",
 )
-def umap(
+def densmap(
     adata: AnnData,
     *,
     min_dist: float = 0.5,
@@ -135,8 +49,8 @@ def umap(
     a: float | None = None,
     b: float | None = None,
     copy: bool = False,
-    method: Literal["umap", "rapids"] = "umap",
     neighbors_key: str | None = None,
+    densmap_kwds: None = None, # TODO
 ) -> AnnData | None:
     """\
     Embed the neighborhood graph using UMAP [McInnes18]_.
@@ -265,68 +179,34 @@ def umap(
 
     from umap.umap_ import simplicial_set_embedding
 
-    if method == "umap":
-        # the data matrix X is really only used for determining the number of connected components
-        # for the init condition in the UMAP embedding
-        default_epochs = 500 if neighbors["connectivities"].shape[0] <= 10000 else 200
-        n_epochs = default_epochs if maxiter is None else maxiter
-        X_umap, _ = simplicial_set_embedding(
-            data=X,
-            graph=neighbors["connectivities"].tocoo(),
-            n_components=n_components,
-            initial_alpha=alpha,
-            a=a,
-            b=b,
-            gamma=gamma,
-            negative_sample_rate=negative_sample_rate,
-            n_epochs=n_epochs,
-            init=init_coords,
-            random_state=random_state,
-            metric=neigh_params.get("metric", "euclidean"),
-            metric_kwds=neigh_params.get("metric_kwds", {}),
-            densmap=False,
-            densmap_kwds={},
-            output_dens=False,
-            verbose=settings.verbosity > 3,
-        )
-    elif method == "rapids":
-        msg = (
-            "`method='rapids'` is deprecated. "
-            "Use `rapids_singlecell.tl.louvain` instead."
-        )
-        warnings.warn(msg, FutureWarning)
-        metric = neigh_params.get("metric", "euclidean")
-        if metric != "euclidean":
-            raise ValueError(
-                f"`sc.pp.neighbors` was called with `metric` {metric!r}, "
-                "but umap `method` 'rapids' only supports the 'euclidean' metric."
-            )
-        from cuml import UMAP
+    # the data matrix X is really only used for determining the number of connected components
+    # for the init condition in the UMAP embedding
+    default_epochs = 500 if neighbors["connectivities"].shape[0] <= 10000 else 200
+    n_epochs = default_epochs if maxiter is None else maxiter
+    X_densmap, _ = simplicial_set_embedding(
+        data=X,
+        graph=neighbors["connectivities"].tocoo(),
+        n_components=n_components,
+        initial_alpha=alpha,
+        a=a,
+        b=b,
+        gamma=gamma,
+        negative_sample_rate=negative_sample_rate,
+        n_epochs=n_epochs,
+        init=init_coords,
+        random_state=random_state,
+        metric=neigh_params.get("metric", "euclidean"),
+        metric_kwds=neigh_params.get("metric_kwds", {}),
+        densmap=True,
+        densmap_kwds={}, # TODO: use param
+        output_dens=False,
+        verbose=settings.verbosity > 3,
+    )
 
-        n_neighbors = neighbors["params"]["n_neighbors"]
-        n_epochs = (
-            500 if maxiter is None else maxiter
-        )  # 0 is not a valid value for rapids, unlike original umap
-        X_contiguous = np.ascontiguousarray(X, dtype=np.float32)
-        umap = UMAP(
-            n_neighbors=n_neighbors,
-            n_components=n_components,
-            n_epochs=n_epochs,
-            learning_rate=alpha,
-            init=init_pos,
-            min_dist=min_dist,
-            spread=spread,
-            negative_sample_rate=negative_sample_rate,
-            a=a,
-            b=b,
-            verbose=settings.verbosity > 3,
-            random_state=random_state,
-        )
-        X_umap = umap.fit_transform(X_contiguous)
-    adata.obsm["X_umap"] = X_umap  # annotate samples with UMAP coordinates
+    adata.obsm["X_densmap"] = X_densmap  # annotate samples with densMAP coordinates
     logg.info(
         "    finished",
         time=start,
-        deep=("added\n" "    'X_umap', UMAP coordinates (adata.obsm)"),
+        deep=("added\n" "    'X_densmap', densMAP coordinates (adata.obsm)"),
     )
     return adata if copy else None
