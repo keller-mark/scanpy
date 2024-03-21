@@ -10,7 +10,6 @@ from ... import logging as logg
 from ..._compat import old_positionals
 from ..._settings import settings
 from ..._utils import AnyRandom, NeighborsView
-from scanpy.tools._utils import _choose_representation, get_init_pos_from_paga
 from scanpy.tools._umap import prepare_umap_or_densmap
 
 if TYPE_CHECKING:
@@ -31,7 +30,6 @@ _InitPos = Literal["paga", "spectral", "random"]
     "a",
     "b",
     "copy",
-    "method",
     "neighbors_key",
 )
 def densmap(
@@ -50,7 +48,9 @@ def densmap(
     b: float | None = None,
     copy: bool = False,
     neighbors_key: str | None = None,
-    densmap_kwds: None = None, # TODO
+    dens_lambda: float = 2.0,
+    dens_frac: float = 0.3,
+    dens_var_shift: float = 0.1,
 ) -> AnnData | None:
     """\
     Embed the neighborhood graph using UMAP [McInnes18]_.
@@ -173,7 +173,6 @@ def densmap(
         a=a,
         b=b,
         copy=copy,
-        method=method,
         neighbors_key=neighbors_key,
     )
 
@@ -183,6 +182,17 @@ def densmap(
     # for the init condition in the UMAP embedding
     default_epochs = 500 if neighbors["connectivities"].shape[0] <= 10000 else 200
     n_epochs = default_epochs if maxiter is None else maxiter
+
+    densmap_kwds = {
+        "graph_dists": neighbors["distances"],
+        "n_neighbors": neighbors["params"]["n_neighbors"],
+        # Default params from umap package
+        # Reference: https://github.com/lmcinnes/umap/blob/868e55cb614f361a0d31540c1f4a4b175136025c/umap/umap_.py#L1692
+        "lambda": dens_lambda,
+        "frac": dens_frac,
+        "var_shift": dens_var_shift,
+    }
+
     X_densmap, _ = simplicial_set_embedding(
         data=X,
         graph=neighbors["connectivities"].tocoo(),
@@ -198,7 +208,7 @@ def densmap(
         metric=neigh_params.get("metric", "euclidean"),
         metric_kwds=neigh_params.get("metric_kwds", {}),
         densmap=True,
-        densmap_kwds={}, # TODO: use param
+        densmap_kwds=densmap_kwds,
         output_dens=False,
         verbose=settings.verbosity > 3,
     )

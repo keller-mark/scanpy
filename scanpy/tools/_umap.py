@@ -32,7 +32,6 @@ def prepare_umap_or_densmap(
     a: float | None = None,
     b: float | None = None,
     copy: bool = False,
-    method: Literal["umap", "rapids"] = "umap",
     neighbors_key: str | None = None,
 ) -> AnnData | None:
     adata = adata.copy() if copy else adata
@@ -259,7 +258,6 @@ def umap(
         a=a,
         b=b,
         copy=copy,
-        method=method,
         neighbors_key=neighbors_key,
     )
 
