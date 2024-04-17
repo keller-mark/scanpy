@@ -4,6 +4,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 from warnings import warn
 
+import zarr
 import numpy as np
 from anndata import AnnData
 from scipy.sparse import issparse
@@ -32,45 +33,78 @@ from ...preprocessing._pca import _handle_mask_var, pca
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+# try dask if available
+try:
+    import dask.array as da
+except ImportError:
+    da = None
 
-def _pearson_residuals(X, theta, clip, check_values, copy: bool = False):
-    X = X.copy() if copy else X
+
+def _pearson_residuals(zarr_path, X_path, theta, clip, check_values, copy=False):
+    #X = X.copy() if copy else X
 
     # check theta
     if theta <= 0:
         # TODO: would "underdispersion" with negative theta make sense?
         # then only theta=0 were undefined..
-        raise ValueError("Pearson residuals require theta > 0")
-    # prepare clipping
-    if clip is None:
-        n = X.shape[0]
-        clip = np.sqrt(n)
-    if clip < 0:
-        raise ValueError("Pearson residuals require `clip>=0` or `clip=None`.")
+        raise ValueError('Pearson residuals require theta > 0')
+    
 
-    if check_values and not check_nonnegative_integers(X):
-        warn(
-            "`normalize_pearson_residuals()` expects raw count data, but non-integers were found.",
-            UserWarning,
-        )
+    # if check_values and not check_nonnegative_integers(X):
+    #     warn(
+    #         "`normalize_pearson_residuals()` expects raw count data, but non-integers were found.",
+    #         UserWarning,
+    #     )
+    
+    if da is not None:
 
-    if issparse(X):
-        sums_genes = np.sum(X, axis=0)
-        sums_cells = np.sum(X, axis=1)
-        sum_total = np.sum(sums_genes).squeeze()
+        # Get the number of cells in X to use for the chunks argument.
+        z = zarr.open(zarr_path, path=X_path, mode='r')
+        X_shape = z.shape
+        var_chunk_size = 5 # Store 5 genes per chunk
+
+
+        # Use Zarr so that X does not get loaded into memory
+        # which would cause Dask to include it in the task graph,
+        # which causes the task graph to be too large.
+        X = da.from_zarr(url=zarr_path, component=X_path, chunks=(X_shape[0], var_chunk_size), inline_array=False)
+
+        # prepare clipping
+        if clip is None:
+            n = X.shape[0]
+            clip = da.sqrt(n)
+        if clip < 0:
+            raise ValueError("Pearson residuals require `clip>=0` or `clip=None`.")
+
+        sums_genes = da.sum(X, axis=0, keepdims=True)
+        sums_cells = da.sum(X, axis=1, keepdims=True)
+        sum_total = da.sum(sums_genes)
+
+        mu = da.divide(da.matmul(sums_cells, sums_genes), sum_total)
+        diff = da.subtract(X, mu)
+        residuals = da.divide(diff, da.sqrt(da.add(mu, da.divide(da.power(mu, 2), theta))))
+        return residuals.clip(min=-clip, max=clip)
+
+
+
+"""
     else:
-        sums_genes = np.sum(X, axis=0, keepdims=True)
-        sums_cells = np.sum(X, axis=1, keepdims=True)
-        sum_total = np.sum(sums_genes)
 
-    mu = np.array(sums_cells @ sums_genes / sum_total)
-    diff = np.array(X - mu)
-    residuals = diff / np.sqrt(mu + mu**2 / theta)
+        X = None
+        if issparse(X):
+            sums_genes = np.sum(X, axis=0)
+            sums_cells = np.sum(X, axis=1)
+            sum_total = np.sum(sums_genes).squeeze()
+        else:
+            sums_genes = np.sum(X, axis=0, keepdims=True)
+            sums_cells = np.sum(X, axis=1, keepdims=True)
+            sum_total = np.sum(sums_genes)
 
-    # clip
-    residuals = np.clip(residuals, a_min=-clip, a_max=clip)
-
-    return residuals
+        mu = (sums_cells @ sums_genes / sum_total)
+        diff = (X - mu)
+        residuals = diff / np.sqrt(mu + mu**2 / theta)
+        return np.clip(residuals, a_min=-clip, a_max=clip)
+"""
 
 
 @_doc_params(
@@ -82,8 +116,10 @@ def _pearson_residuals(X, theta, clip, check_values, copy: bool = False):
     copy=doc_copy,
 )
 def normalize_pearson_residuals(
-    adata: AnnData,
+    adata: Optional[AnnData] = None,
     *,
+    zarr_path: str,
+    X_path: str,
     theta: float = 100,
     clip: float | None = None,
     check_values: bool = True,
@@ -124,19 +160,25 @@ def normalize_pearson_residuals(
          The name of the layer on which the residuals were computed.
     """
 
-    if copy:
-        if not inplace:
-            raise ValueError("`copy=True` cannot be used with `inplace=False`.")
-        adata = adata.copy()
+    if adata is not None:
 
-    view_to_actual(adata)
-    X = _get_obs_rep(adata, layer=layer)
-    computed_on = layer if layer else "adata.X"
+        if copy:
+            if not inplace:
+                raise ValueError("`copy=True` cannot be used with `inplace=False`.")
+            adata = adata.copy()
+
+        view_to_actual(adata)
+        X = _get_obs_rep(adata, layer=layer)
+    
+    computed_on = layer if layer else 'adata.X'
 
     msg = f"computing analytic Pearson residuals on {computed_on}"
     start = logg.info(msg)
 
-    residuals = _pearson_residuals(X, theta, clip, check_values, copy=~inplace)
+    residuals = _pearson_residuals(zarr_path, X_path, theta, clip, check_values, copy=~inplace)
+    if da is not None:
+        # Temporary: return early if using dask.
+        return residuals
     settings_dict = dict(theta=theta, clip=clip, computed_on=computed_on)
 
     if inplace:
