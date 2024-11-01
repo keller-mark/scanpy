@@ -663,11 +663,13 @@ def rank_genes_groups(
         comp_pts=pts,
     )
 
+    """
     if check_nonnegative_integers(test_obj.X) and method != "logreg":
         logg.warning(
             "It seems you use rank_genes_groups on the raw count data. "
             "Please logarithmize your data before calling rank_genes_groups."
         )
+    """
 
     # for clarity, rename variable
     n_genes_user = n_genes
