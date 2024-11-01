@@ -5,6 +5,7 @@ from __future__ import annotations
 from math import floor
 from typing import TYPE_CHECKING, Literal, get_args
 
+import zarr
 import numpy as np
 import pandas as pd
 from scipy.sparse import issparse, vstack
@@ -199,7 +200,10 @@ class _RankGenes:
             get_nonzeros = lambda X: np.count_nonzero(X, axis=0)
 
         for group_index, mask_obs in enumerate(self.groups_masks_obs):
-            X_mask = self.X[mask_obs]
+            if isinstance(self.X, zarr.Array):
+                X_mask = self.X.get_orthogonal_selection(mask_obs)
+            else:
+                X_mask = self.X[mask_obs]
 
             if self.comp_pts:
                 self.pts[group_index] = get_nonzeros(X_mask) / X_mask.shape[0]
@@ -211,7 +215,10 @@ class _RankGenes:
 
             if self.ireference is None:
                 mask_rest = ~mask_obs
-                X_rest = self.X[mask_rest]
+                if isinstance(self.X, zarr.Array):
+                    X_rest = self.X.get_orthogonal_selection(mask_rest)
+                else:
+                    X_rest = self.X[mask_rest]
                 (
                     self.means_rest[group_index],
                     self.vars_rest[group_index],
