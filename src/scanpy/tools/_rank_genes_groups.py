@@ -63,11 +63,22 @@ def _ranks(
     if masked:
         n_cells = np.count_nonzero(mask_obs) + np.count_nonzero(mask_obs_rest)
         get_chunk = lambda X, left, right: merge(
-            (X[mask_obs, left:right], X[mask_obs_rest, left:right])
+            (
+                X.get_orthogonal_selection((mask_obs, slice(left, right)))
+                if isinstance(X, zarr.Array)
+                else X[mask_obs, left:right],
+                X.get_orthogonal_selection((mask_obs_rest, slice(left, right)))
+                if isinstance(X, zarr.Array)
+                else X[mask_obs_rest, left:right],
+            )
         )
     else:
         n_cells = X.shape[0]
-        get_chunk = lambda X, left, right: adapt(X[:, left:right])
+        get_chunk = lambda X, left, right: adapt(
+            X.get_orthogonal_selection((slice(None), slice(left, right)))
+            if isinstance(X, zarr.Array)
+            else X[:, left:right]
+        )
 
     # Calculate chunk frames
     max_chunk = floor(CONST_MAX_SIZE / n_cells)
