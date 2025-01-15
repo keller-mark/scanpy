@@ -187,8 +187,8 @@ class _RankGenes:
         else:
             mask_rest = self.groups_masks_obs[self.ireference]
             if isinstance(self.X, zarr.Array):
-                print(mask_rest)
-                X_rest = self.X.get_orthogonal_selection(mask_rest)
+                # print(mask_rest)
+                X_rest = self.X.get_mask_selection(mask_rest)
             else:
                 X_rest = self.X[mask_rest]
             self.means[self.ireference], self.vars[self.ireference] = _get_mean_var(
