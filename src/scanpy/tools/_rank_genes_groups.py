@@ -5,16 +5,15 @@ from __future__ import annotations
 from math import floor
 from typing import TYPE_CHECKING, Literal, get_args
 
-import zarr
 import numpy as np
 import pandas as pd
+import zarr
 from scipy.sparse import issparse, vstack
 
 from .. import _utils
 from .. import logging as logg
 from .._compat import old_positionals
 from .._utils import (
-    check_nonnegative_integers,
     raise_not_implemented_error_if_backed_type,
 )
 from ..get import _check_mask
@@ -187,7 +186,10 @@ class _RankGenes:
             self.pts_rest = np.zeros((n_groups, n_genes)) if self.comp_pts else None
         else:
             mask_rest = self.groups_masks_obs[self.ireference]
-            X_rest = self.X[mask_rest]
+            if isinstance(self.X, zarr.Array):
+                X_rest = self.X.get_orthogonal_selection(mask_rest)
+            else:
+                X_rest = self.X[mask_rest]
             self.means[self.ireference], self.vars[self.ireference] = _get_mean_var(
                 X_rest
             )
