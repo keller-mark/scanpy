@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+import zarr
 import numpy as np
 import pandas as pd
 from scipy.sparse import issparse, vstack
@@ -65,11 +66,22 @@ def _ranks(
     if masked:
         n_cells = np.count_nonzero(mask_obs) + np.count_nonzero(mask_obs_rest)
         get_chunk = lambda X, left, right: merge(
-            (X[mask_obs, left:right], X[mask_obs_rest, left:right])
+            (
+                X.get_orthogonal_selection((mask_obs, slice(left, right)))
+                if isinstance(X, zarr.Array)
+                else X[mask_obs, left:right],
+                X.get_orthogonal_selection((mask_obs_rest, slice(left, right)))
+                if isinstance(X, zarr.Array)
+                else X[mask_obs_rest, left:right],
+            )
         )
     else:
         n_cells = X.shape[0]
-        get_chunk = lambda X, left, right: adapt(X[:, left:right])
+        get_chunk = lambda X, left, right: adapt(
+            X.get_orthogonal_selection((slice(None), slice(left, right)))
+            if isinstance(X, zarr.Array)
+            else X[:, left:right]
+        )
 
     # Calculate chunk frames
     max_chunk = max(_CONST_MAX_SIZE // n_cells, 1)
@@ -190,7 +202,13 @@ class _RankGenes:
             self.pts_rest = np.zeros((n_groups, n_genes)) if self.comp_pts else None
         else:
             mask_rest = self.groups_masks_obs[self.ireference]
-            X_rest = self.X[mask_rest]
+            if isinstance(self.X, zarr.Array):
+                # print(mask_rest)
+                X_rest = self.X.get_orthogonal_selection(
+                    (mask_rest[0].tolist(), slice(None))
+                )
+            else:
+                X_rest = self.X[mask_rest]
             self.means[self.ireference], self.vars[self.ireference] = _get_mean_var(
                 X_rest
             )
@@ -203,7 +221,10 @@ class _RankGenes:
             get_nonzeros = lambda X: np.count_nonzero(X, axis=0)
 
         for group_index, mask_obs in enumerate(self.groups_masks_obs):
-            X_mask = self.X[mask_obs]
+            if isinstance(self.X, zarr.Array):
+                X_mask = self.X.get_orthogonal_selection(mask_obs)
+            else:
+                X_mask = self.X[mask_obs]
 
             if self.comp_pts:
                 self.pts[group_index] = get_nonzeros(X_mask) / X_mask.shape[0]
@@ -215,7 +236,10 @@ class _RankGenes:
 
             if self.ireference is None:
                 mask_rest = ~mask_obs
-                X_rest = self.X[mask_rest]
+                if isinstance(self.X, zarr.Array):
+                    X_rest = self.X.get_orthogonal_selection(mask_rest)
+                else:
+                    X_rest = self.X[mask_rest]
                 (
                     self.means_rest[group_index],
                     self.vars_rest[group_index],
@@ -664,11 +688,13 @@ def rank_genes_groups(
         comp_pts=pts,
     )
 
+    """
     if check_nonnegative_integers(test_obj.X) and method != "logreg":
         logg.warning(
             "It seems you use rank_genes_groups on the raw count data. "
             "Please logarithmize your data before calling rank_genes_groups."
         )
+    """
 
     # for clarity, rename variable
     n_genes_user = n_genes
