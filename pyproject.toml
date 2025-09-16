@@ -46,7 +46,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = [
-    "anndata>=0.8",
+    "anndata",
     "numpy>=1.24",
     "matplotlib>=3.6",
     "pandas >=1.5",
